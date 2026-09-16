@@ -1,133 +1,70 @@
-# TESTING — verifying the SexPistols safety fixes
+# SexPistols: test the repaired configuration
 
-These fixes were implemented and regression-tested **offline only** (Jinja render +
-mocked status; rendered G-code is never executed — see `tests/`). Offline rendering
-**cannot prove hardware behaviour**. A fresh Klipper load and the attended checks
-below are the deployment owner's responsibility.
+Offline tests are not hardware certification. Follow this order with a clear bed, properly secured mounted tool, clear docks, and emergency stop within reach. Do not deliberately detach a tool during a print to test detection. Stop on unexpected travel, temperature, collision, or shutdown.
 
-**Global prerequisites & stop conditions**
+## 1. Configuration load (operator performs before handoff)
 
-* Physical **E-stop within reach**; be ready to hit it.
-* **Clear bed**, no print in progress, correct tool physically secured in its dock.
-* If any step behaves unexpectedly (unexpected motion direction, a descending Z move,
-  a heater staying on, a crash-detector shutdown), **STOP**, power down if needed, and
-  roll back per `RECOVERY.md`.
-* **Never** run the retired `UNSAFE_LOWER_BED` / `UNSAFE_RAISE_BED` (they now error by
-  design) and never force unhomed motion to "recover".
+Deploy only after checking standby and all heater targets zero. Run RESTART, not homing or printing. Require Klipper ready, warnings empty, input_shaper loaded, and calibration offsets unchanged. Read back effective macros. If configuration loading fails, restore the previous files and RESTART; do not proceed.
 
-Run the checks in order. Do not proceed to a later phase until the earlier one passes.
+## 2. No-motion checks immediately after restart, while still unhomed
 
----
+Send commands one at a time in Mainsail:
 
-## Phase 0 — Offline regression tests (no printer)
+- `PRINT_END`: heaters/fans off, report skipping lift; no motion.
+- `RESUME`: error that printer is not paused; no motion/extrusion.
+- `INCREASE_Z_CLEARANCE MM=0`: reject invalid increment.
+- `INCREASE_Z_CLEARANCE MM=10`: reject unhomed Z.
+- `APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS`: reject absent measurement.
+- `CALIBRATE_ALL_OFFSETS`: reject unhomed axes.
 
-```
-cd tests
-../.venv/bin/python -m unittest test_safety_fixes -v
-```
+These errors are intentional. Do not use the retired UNSAFE_LOWER_BED/UNSAFE_RAISE_BED commands; their old unhomed motions are disabled.
 
-Expected: **41 tests OK**. (If the venv is absent: `uv venv .venv && uv pip install
---python .venv/bin/python jinja2`.)
+## 3. First attended motion
 
-## Phase 1 — Config load / restart (no heat, no motion)
+1. Confirm the normal mounted-tool/bed/dock prerequisites for this printer, then `G28`. Homing geometry was not changed.
+2. `INCREASE_Z_CLEARANCE MM=5`: expect clearance to increase by about 5 mm, limited near the ceiling.
+3. `PRINT_END`: expect heater targets zero, a Z-only upward lift of at most 10 mm, NO XY parking, NO descent, and motors remaining enabled until the existing idle timeout. The removal of lateral parking is intentional: no unverified clear corridor is assumed.
+4. Do not test at maximum travel or use fabricated coordinates. Near-ceiling cases were checked offline; physical boundary verification belongs in a separate controlled session.
+5. After these pass, perform familiar attended tool changes individually (T0 then each needed tool). Watch pickup/detection and check console for errors. New shaping uses existing configured parameters, not newly measured values.
 
-1. Deploy the config and **RESTART** (or `FIRMWARE_RESTART`).
-2. Expected: Klipper reaches **ready** with no config errors. In particular confirm
-   the new/overridden objects loaded:
-   * `[input_shaper]` present; `SET_INPUT_SHAPER` is now a known command.
-   * `RESUME`, `CALIBRATE_ALL_OFFSETS`, `TOOL_ALIGN_TEST`, `SAFE_SYNC_MOTORS`,
-     `INCREASE_Z_CLEARANCE`, `APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS` are registered.
-3. Stop condition: any "Option ... is not valid", "Unable to parse", or duplicate
-   command-rename error → do not proceed; roll back.
+## 4. Small first print and pause/resume
 
-## Phase 2 — No-heat, no-motion command checks
+Use a small, familiar single-tool sliced file, not a large multi-tool job. Keep the first run attended.
 
-Run each and read the response only (these must not move the toolhead or heat):
+- Startup: bed/nozzle preparation, the existing five-minute soak for bed <=90 C or chamber-target wait above90 C, THEN final QGL, Z reference/Beacon calibration and adaptive mesh.
+- Confirm object definitions exist before meshing if adaptive bounds are expected.
+- Confirm normal purge; max_extrude_cross_section remains5 for VORON_PURGE.
+- Pause through Mainsail. Resume while hot: tool verification precedes unretract and return to print. Do not attempt a cold resume without following the displayed reheating instructions.
+- At finish: targets zero; Z-only bounded lift; no lateral/downward park.
 
-* `UNSAFE_LOWER_BED` and `UNSAFE_RAISE_BED` → **expected: an error** telling you to use
-  `INCREASE_Z_CLEARANCE` / `G28`. No motion.
-* `APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS` before any calibration → **expected: error**
-  ("No recorded calibration result").
-* `INCREASE_Z_CLEARANCE MM=10` while **unhomed** → **expected: error** ("requires a
-  homed Z"). No motion.
-* `INCREASE_Z_CLEARANCE MM=0` and `MM=51` → **expected: error** (bounds).
-* `CALIBRATE_ALL_OFFSETS` while **unhomed** → **expected: error** ("home all axes
-  first"). No motion.
-* `SAFE_SYNC_MOTORS` while unhomed / with a non-T0 tool active → **expected: error**.
+Do not first test with a full-temperature unattended multi-tool print. Real idle-timeout recovery and all-tool operation need separate attended acceptance checks.
 
-## Phase 3 — Controlled, attended motion (homed, bed clear, hand on E-stop)
+## 5. Calibration (separate session, only if needed)
 
-1. `G28` — confirm normal homing (behaviour is unchanged; the readonly toolchanger
-   homing override is still authoritative). Watch that homing rebound/coordinates are
-   as before.
-2. `INCREASE_Z_CLEARANCE MM=10` — Z should rise ~10 mm (upward only), clamped near the
-   top of travel; no descent.
-3. **PRINT_END trajectory** (the key fix). With the toolhead parked mid-bed at a few Z
-   heights, run `PRINT_END` and watch Z:
-   * From a **low** Z (e.g. Z50): a single upward lift toward the top, then lateral
-     travel to the dock X / safe Y. **No descending Z at any point.**
-   * From a **high** Z (e.g. Z259, Z278, Z280): the lift target never goes **below**
-     the current Z and never above the ceiling; then lateral travel. **No descent.**
-   * From an **unhomed** state: `PRINT_END` turns heaters off and **skips** the park
-     with an info message (no motion).
-   * With **no tool selected** (`UNSELECT_TOOL` first): `PRINT_END` still turns heaters
-     off, lifts, and **skips the lateral park** — it must **not** raise an error.
-   Stop condition: any downward Z move, or a diagonal that lowers toward the bed/an
-   object.
-4. `TOOL_ALIGN_TEST` near a real dock (positive dock Y): **expected: accepted** and it
-   proceeds to `TEST_TOOL_DOCKING`. Far from the dock (>30 mm): **expected: aborted**.
-   Dock coordinates are not modified by this test.
+Existing calibration values were preserved. Do not recalibrate merely to test basic startup.
 
-## Phase 4 — Thermal / calibration (attended)
+Use a fresh restart, clear bed, correct calibration switch placement, normal homing, and verified T0 reference. `CALIBRATE_ALL_OFFSETS` is a real heating/tool-changing/probing procedure, not a no-motion diagnostic. It heats each selected tool to150 C, captures T0 sensor location, then measures/stages each remaining tool's offsets to its own section. Review staged values before `SAVE_CONFIG`.
 
-1. `SAFE_SYNC_MOTORS` with **T0 mounted/detected** and homed → proceeds
-   (`VERIFY_TOOL_DETECTED` then `SYNC_MOTORS`). With T0 not detected → aborts.
-2. **Per-tool offset calibration** (`CALIBRATE_ALL_OFFSETS`):
-   * Confirm the **first tool (T0)** heater actually heats and the wait is on **T0's**
-     extruder — not the previously-active tool (fix 2.1). Watch the console: the
-     `TEMPERATURE_WAIT SENSOR=` must name the active tool's extruder.
-   * Confirm each tool's result is **staged to its own section** (fix 2.3): after the
-     run, inspect the pending `SAVE_CONFIG` diff — each `[tool Tn] gcode_*_offset`
-     should hold **that tool's** measured value. A T4 measurement must **not** land on
-     `[tool T0]`.
-   * `SAVE_CONFIG` is an **explicit** step you run yourself when the offsets look
-     correct; the macros never auto-restart.
-3. **Single-tool apply** (`APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS`): run
-   `TOOL_CALIBRATE_TOOL_OFFSET` on the **active** tool, then apply. Verify:
-   * A **sensor-location** result (`TOOL_LOCATE_SENSOR` only) is **refused**.
-   * A result whose tool ≠ the active tool is **refused**.
-   * A valid, fresh, matching result applies live (`SET_GCODE_OFFSET`) and stages to
-     the correct `[tool Tn]` section for `SAVE_CONFIG`.
-4. **Input shaping**: after a toolchange, confirm the shaper is set with the tool's
-   **type + frequency + damping** (e.g. `SET_INPUT_SHAPER SHAPER_TYPE_X=mzv
-   SHAPER_FREQ_X=62.4 DAMPING_RATIO_X=0.01 ...`). These are the **existing configured**
-   values (mzv / 62.4 / 88.6 / 0.01); you must **validate real resonance measurements**
-   before trusting them for print quality.
+The historical command `APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS` is now deliberately STAGE-ONLY: it rejects sensor locations, stale/mismatched results, and consumed results. It does not mutate the live transform. `SAVE_CONFIG` persists and restarts, loading tool-object and motion state consistently. Do not expect same-tool reselection to apply new values.
 
-## Phase 5 — Print-level (attended first print)
+Tool offsets now live in root printer.cfg so SAVE_CONFIG can replace them without included-value conflicts. Their numerical values were not altered by deployment. Never apply an absolute sensor-location result as a tool offset.
 
-1. `PRINT_START` with realistic params. Confirm the intended sequence:
-   * `M191`/`G4 S500` are gone; bed heats; nozzle preheats to 150.
-   * The **soak happens BEFORE** `QUAD_GANTRY_LEVEL` / `G28 Z` / `BEACON_AUTO_CALIBRATE`
-     (leveling references are established at temperature — fix 2.4).
-   * KAMP purge (`VORON_PURGE`) still runs; `max_extrude_cross_section` unchanged.
-   * `START_TOOL_CRASH_DETECTION` enables the new detector.
-2. **PAUSE / RESUME** mid-print: PAUSE retracts and parks; `RESUME` must
-   **reheat/unretract** (full Mainsail recovery restored) **and** verify the tool
-   before resuming. If the tool is not detected, `RESUME` must **abort before**
-   restoring position (no `RESUME_BASE`).
-3. Finish with `PRINT_END` and confirm the safe park (Phase 3.3) at the real print
-   height.
+## 6. Optional maintenance helpers — not first-run tests
 
-## Deferred / still-unproven (see review §5 and RECOVERY.md)
+- `SAFE_SYNC_MOTORS` requires homed XY and T0 active/detected; synchronization causes physical motion/vibration. Not needed for first print acceptance.
+- `TOOL_ALIGN_TEST` is a real docking/calibration operation. It checks proximity to the configured dock, then stages the current machine position as a candidate dock position. It DOES change in-memory dock parameters. Do not run casually or at an arbitrary nearby point; follow the established dock-alignment procedure and do not save unverified coordinates.
+- `TEST_SPEED` is a motion stress test, not required for these safety fixes.
 
-The following were **not** changed (not confirmed faults) and remain validation work,
-not proven failures — do not "fix" them without hardware data:
+## Deferred validation
 
-* Crash-detector `UNSELECT_TOOL` / late-edge lifecycle timing (review 3): the new
-  detector is intentionally left enabled; the legacy inert wrappers were only cleaned
-  up. Watch for any nuisance shutdown around unselect/homing during Phase 5 and report.
-* Controller fan cooling values, extruder sense-resistor (0.11 vs 0.100),
-  interpolation policy, homing Y-rebound / travel geometry, toolchange corridor, rear
-  QGL coverage, Moonraker `trusted_clients` scope. All are hardware/environment
-  dependent and left documented, not guessed.
+Fan voltage/startup/cooling, Nitehawk resistor identity, motor interpolation policy, safe Y rebound, dock corridors, rear Beacon sensing coverage and network trust require hardware/environment evidence. They were not guessed. Detector late-edge/UNSELECT_TOOL behavior remains an identified conditional risk; do not disable protection to hide it. Report unexpected shutdowns with console/log evidence.
+
+## Offline tests
+
+From repository root: create a local venv with Jinja2 if absent, then `cd tests && ../.venv/bin/python -m unittest test_safety_fixes -v`. Harness uses the operator's dereferenced review evidence, not a standalone firmware simulator; see tests/klipper_render.py. No rendered G-code is sent to hardware.
+
+## Rollback
+
+Pre-change commit: `152d3217b502ee6e02fa679775a5d6ad18507e5d`.
+Dereferenced backup on Pi: `/home/hermes/printer-backups/before-safety-fixes-20260915-212447.tar.gz`.
+Do not extract the entire dereferenced archive over managed symlinks. Restore only changed user files from the Git baseline, then RESTART. See RECOVERY.md. If you encounter a problem, stop and ask the operator to perform rollback rather than forcing unhomed movement.

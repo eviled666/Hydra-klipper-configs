@@ -17,7 +17,7 @@ dependencies listed below and re-applying any local patches.
 | Item | Value |
 |------|-------|
 | Host | SexPistols |
-| Klipper | `v0.13.0-629-g6349d4fb0-dirty` (note the `-dirty` suffix: local modifications present) |
+| Klipper | `v0.13.0-629-g6349d4fb0-dirty` (note the `-dirty` suffix: do not assume pristine upstream) |
 | Config path | `/home/pi/printer_data/config/printer.cfg` |
 | Klippy env | `/home/pi/klippy-env` |
 
@@ -25,15 +25,15 @@ dependencies listed below and re-applying any local patches.
 
 | Repo path (symlink) | Target | Upstream project | Known revision |
 |---------------------|--------|------------------|----------------|
-| `KAMP` | `/home/pi/Klipper-Adaptive-Meshing-Purging/Configuration` | Klipper-Adaptive-Meshing-Purging | UNKNOWN (review: one content change + likely mode-only changes reported by parent) |
-| `mainsail.cfg` | `/home/pi/mainsail-config/mainsail.cfg` | mainsail-config | tracked at **ff3869a** (source of the RESUME/PAUSE body reproduced in `user-overrides.cfg`) |
-| `toolchanger/readonly-configs/toolchanger.cfg` | `/home/pi/klipper-toolchanger-easy/examples/easy-additions/toolchanger.cfg` | klipper-toolchanger-easy | UNKNOWN |
-| `toolchanger/readonly-configs/toolchanger-macros.cfg` | `.../easy-additions/toolchanger-macros.cfg` | klipper-toolchanger-easy | UNKNOWN |
-| `toolchanger/readonly-configs/toolchanger-include.cfg` | `.../easy-additions/user-configs/toolchanger-include.cfg` | klipper-toolchanger-easy | UNKNOWN |
-| `toolchanger/readonly-configs/calibrate-offsets.cfg` | `.../easy-additions/calibrate-offsets.cfg` | klipper-toolchanger-easy | UNKNOWN |
+| `KAMP` | `/home/pi/Klipper-Adaptive-Meshing-Purging/Configuration` | Klipper-Adaptive-Meshing-Purging | `b0dad8e` (local KAMP_Settings content changes) |
+| `mainsail.cfg` | `/home/pi/mainsail-config/client.cfg` | mainsail-config | tracked at **ff3869a** (source of the RESUME/PAUSE body reproduced in `user-overrides.cfg`) |
+| `toolchanger/readonly-configs/toolchanger.cfg` | `/home/pi/klipper-toolchanger-easy/examples/easy-additions/toolchanger.cfg` | klipper-toolchanger-easy | `08dc049` |
+| `toolchanger/readonly-configs/toolchanger-macros.cfg` | `.../easy-additions/toolchanger-macros.cfg` | klipper-toolchanger-easy | `08dc049` |
+| `toolchanger/readonly-configs/toolchanger-include.cfg` | `.../easy-additions/user-configs/toolchanger-include.cfg` | klipper-toolchanger-easy | `08dc049` |
+| `toolchanger/readonly-configs/calibrate-offsets.cfg` | `.../easy-additions/calibrate-offsets.cfg` | klipper-toolchanger-easy | `08dc049` |
 | `toolchanger/readonly-configs/crash-detection.cfg` | `.../easy-additions/crash-detection.cfg` | klipper-toolchanger-easy (legacy wrappers) | UNKNOWN |
-| `toolchanger/readonly-configs/homing.cfg` | `.../easy-additions/homing.cfg` | klipper-toolchanger-easy | UNKNOWN |
-| `toolchanger/readonly-configs/tool_detection.cfg` | `.../easy-additions/tool_detection.cfg` | klipper-toolchanger-easy | UNKNOWN |
+| `toolchanger/readonly-configs/homing.cfg` | `.../easy-additions/homing.cfg` | klipper-toolchanger-easy | `08dc049` |
+| `toolchanger/readonly-configs/tool_detection.cfg` | `.../easy-additions/tool_detection.cfg` | klipper-toolchanger-easy | `08dc049` |
 
 ## Klipper python extras (installed into `klipper/extras`, evidence dated 2025-12-04)
 
@@ -54,9 +54,10 @@ All fixes are expressed as **user-owned overrides** merged on top of the read-on
 dependencies — nothing under the symlink targets is edited:
 
 * `printer.cfg` — adds a single `[include user-overrides.cfg]` as the **last**
-  include before the `SAVE_CONFIG` block.
+  include before the `SAVE_CONFIG` block, plus unchanged tool offsets moved from
+  T0..T4 includes to the root so SAVE_CONFIG can replace them without include conflicts.
 * `user-overrides.cfg` — new user file; wins the Klipper same-section-key merge for
-  `RESUME`, the calibration macros, `TOOL_ALIGN_TEST`, the `[toolchanger]`
+  `PAUSE`/`RESUME`, the calibration macros, `TOOL_ALIGN_TEST`, the `[toolchanger]`
   `after_change_gcode`, the new `[input_shaper]`, and adds `SAFE_SYNC_MOTORS`.
 * `macros.cfg` — root, user-owned; `PRINT_START`, `PRINT_END`/`_PRINT_END_PARK`,
   `APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS`, the retired `UNSAFE_*` + new
@@ -71,16 +72,35 @@ win. Duplicate `[gcode_macro NAME]` sections do **not** stack wrappers — they 
 
 ## Rollback
 
-* **Preferred:** restore the parent's verified dereferenced backup captured before
-  these fixes: `/home/hermes/printer-backups/before-safety-fixes-20260915-212447.tar.gz`.
-* **Git:** these changes are on branch `fix/verified-printer-safety`. To revert to the
-  pre-fix snapshot, check out commit `152d321` (the "Back up current SexPistols…"
-  commit). This does **not** touch the external symlink targets.
+Baseline commit: `152d3217b502ee6e02fa679775a5d6ad18507e5d`.
+Verified dereferenced backup on Pi:
+`/home/hermes/printer-backups/before-safety-fixes-20260915-212447.tar.gz`.
+Do not blindly extract over live symlinks; this archive contains their contents.
 
-## Known-unproven / deferred (owner action)
+Stop printing and ensure heaters are off. From `/home/pi/printer_data/config`:
 
-* Exact upstream revisions + local patches of the symlinked dependencies (mark and
-  capture properly; the `-dirty` Klipper suffix and reported KAMP change indicate
-  local modifications exist).
-* Whether `SAVE_CONFIG` on the live printer will conflict with managed files — not
-  established here.
+```bash
+git --git-dir=.git --work-tree=. restore --source=152d321 --worktree -- printer.cfg macros.cfg homing.cfg toolchanger/tools/T0.cfg toolchanger/tools/T1.cfg toolchanger/tools/T2.cfg toolchanger/tools/T3.cfg toolchanger/tools/T4.cfg
+```
+
+Issue `RESTART` in Mainsail; require ready. This restores only runtime files changed
+by this repair. `user-overrides.cfg` becomes unreferenced. External dependencies and
+the backup ZIP remain untouched. Preserve any later calibration before rollback.
+
+## Additional verified dependency revisions
+
+Klipper `6349d4fb0`, Beacon `7c71e98`, motors-sync `0e59ed7`.
+These identify checkouts, not proof that installed copies are pristine upstream.
+Full Pi OS/firmware restoration and custom extra provenance remain outside this config backup.
+
+## Safety changes and limits
+
+PAUSE freezes tool identity; RESUME verifies it before a separate render handles
+that verified tool's temperature and Mainsail recovery. Calibration changes are
+stage-only until explicit SAVE_CONFIG/restart; the live transform is not partially
+updated. PRINT_END shuts heat off first, then at most10mm Z-only lift with headroom,
+without lateral parking or immediate gantry motor disable. Existing idle timeout remains.
+
+Offline tests are not hardware certification. Follow TESTING.md. Crash detector,
+electrical settings, dock coordinates, PID, pressure advance, and motion limits
+were not guessed or disabled. Physical validation remains attended.

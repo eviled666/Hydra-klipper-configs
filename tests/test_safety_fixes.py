@@ -92,12 +92,10 @@ class PrintEndShutdown(unittest.TestCase):
         self.assertFalse(any(l.startswith("G1 E-") for l in out))
         self.assertTrue(any("TURN_OFF_HEATERS" in l for l in out))
 
-    def test_new_body_hot_retracts_before_heaters_off(self):
-        out = C(k.render_macro(CFG, "PRINT_END",
-                               base_printer(extruder="extruder", can_extrude=True)))
-        i_ret = [i for i, l in enumerate(out) if l.startswith("G1 E-4")][0]
-        i_off = [i for i, l in enumerate(out) if "TURN_OFF_HEATERS" in l][0]
-        self.assertLess(i_ret, i_off)
+    def test_shutdown_is_first_and_cannot_retract_or_drop_gantry(self):
+        out = C(k.render_macro(CFG, "PRINT_END", base_printer()))
+        self.assertEqual(out[0], "TURN_OFF_HEATERS")
+        self.assertFalse(any(l.startswith(("G1 E", "M18", "M84")) for l in out))
 
 
 # --------------------------------------------------------------------------- #
@@ -112,33 +110,27 @@ class PrintEndPark(unittest.TestCase):
         return [l for l in out if l.startswith("G0 Z")]
 
     def test_no_descent_from_various_heights(self):
-        for cz in (259.0, 275.0, 278.0, 280.0):
+        for cz in (0, 259.0, 275.0, 278.0, 280.0):
             out = self.park(cz)
             for zm in self.z_moves(out):
-                self.assertGreaterEqual(zval(zm), cz,
-                                        "descent at cz=%s: %r" % (cz, zm))
+                self.assertIn("G91", out)
+                self.assertGreater(zval(zm), 0)
+                self.assertLessEqual(cz + zval(zm), 279.5)
 
     def test_z259_no_intermediate_overshoot_then_descent(self):
-        # The old body lifted to Z279 then a combined park descended to Z275.
-        # The new body performs a single upward-only lift; assert only one Z move
-        # and that it does not exceed the ceiling nor descend.
-        out = self.park(259.0)
-        zs = [zval(z) for z in self.z_moves(out)]
-        self.assertEqual(len(zs), 1)
-        self.assertGreaterEqual(zs[0], 259.0)
-        self.assertLessEqual(zs[0], 280.0)
+        out = self.park(259)
+        self.assertEqual([zval(z) for z in self.z_moves(out)], [10.0])
 
-    def test_lateral_move_happens_after_lift(self):
-        out = self.park(200.0)
-        i_z = [i for i, l in enumerate(out) if l.startswith("G0 Z")][0]
-        i_xy = [i for i, l in enumerate(out) if l.startswith("G0 X")][0]
-        self.assertLess(i_z, i_xy, "XY travel must come after the clearance lift")
+    def test_no_unverified_lateral_moves_even_at_ceiling(self):
+        for z in (10, 200, 278, 280):
+            out = self.park(z)
+            self.assertFalse(any(l.startswith(("G0 X", "G0 Y")) for l in out))
 
     def test_offset_does_not_overtravel_machine_ceiling(self):
-        # gcode Z target + Z offset must stay <= machine max (280).
-        out = self.park(279.0, off=(0.0, 0.0, 5.0))
-        for zm in self.z_moves(out):
-            self.assertLessEqual(zval(zm) + 5.0, 280.0 + 1e-6)
+        for off in (-5, 0, 5):
+            out = self.park(279, off=(0, 0, off))
+            for zm in self.z_moves(out):
+                self.assertLessEqual(279 + zval(zm), 279.5)
 
     def test_unhomed_skips_park(self):
         out = self.park(200.0, homed="")
@@ -195,36 +187,48 @@ class UnsafeMacros(unittest.TestCase):
 # 1.3 RESUME - Mainsail body restored + tool verification gating
 # --------------------------------------------------------------------------- #
 class ResumeMacro(unittest.TestCase):
-    def resume(self, can_extrude=True, idle="Ready"):
-        pr = S(idle_timeout=S(state=idle), toolhead=S(extruder="extruder"),
+    def state(self, hot=True, paused=True, expected=0, active=0):
+        pr = S(pause_resume=S(is_paused=paused), idle_timeout=S(state="Ready"),
+               toolhead=S(extruder="extruder"), toolchanger=S(tool_number=active),
                configfile=S(settings=S(pause_resume=S(recover_velocity=50))))
-        pr["extruder"] = S(can_extrude=can_extrude)
-        return C(k.render_macro(CFG, "RESUME", pr, params={}, idle_state=False,
-                                last_extruder_temp={"restore": False, "temp": 0},
-                                restore_idle_timeout=0))
+        pr["extruder"] = S(can_extrude=hot, target=210)
+        pr["gcode_macro RESUME"] = S(expected_tool=expected, idle_state=False,
+             last_extruder_temp={"restore":False,"temp":0}, restore_idle_timeout=0)
+        return pr
 
-    def test_hot_resume_verifies_before_base(self):
-        out = self.resume(can_extrude=True)
-        self.assertTrue(any("_CLIENT_EXTRUDE" in l for l in out))
-        i_v = [i for i, l in enumerate(out) if "VERIFY_TOOL_DETECTED" in l][0]
-        i_i = [i for i, l in enumerate(out) if "INITIALIZE_TOOLCHANGER" in l][0]
-        i_b = [i for i, l in enumerate(out) if l.startswith("RESUME_BASE")][0]
-        self.assertLess(i_i, i_b)
-        self.assertLess(i_v, i_b)
+    def test_resume_verifies_recorded_identity_before_second_render(self):
+        out = C(k.render_macro(CFG,"RESUME",self.state(expected=4),rawparams=""))
+        self.assertEqual(out[:3], ["INITIALIZE_TOOLCHANGER","VERIFY_TOOL_DETECTED T=4","_RESUME_VERIFIED"])
+        self.assertFalse(any(l.startswith(("M109","_CLIENT_EXTRUDE","RESUME_BASE")) for l in out))
+
+    def test_verified_hot_resume_unretracts_then_resumes(self):
+        out=C(k.render_macro(CFG,"_RESUME_VERIFIED",self.state()))
+        self.assertLess(out.index("_CLIENT_EXTRUDE"),next(i for i,l in enumerate(out) if l.startswith("RESUME_BASE")))
 
     def test_cold_resume_aborts_without_position_resume(self):
-        out = self.resume(can_extrude=False)
+        out=C(k.render_macro(CFG,"_RESUME_VERIFIED",self.state(hot=False)))
         self.assertFalse(any(l.startswith("RESUME_BASE") for l in out))
-        self.assertFalse(any("VERIFY_TOOL_DETECTED" in l for l in out))
-        self.assertTrue(any("aborted" in l for l in out))
+
+    def test_wrong_active_tool_is_refused(self):
+        with self.assertRaises(MacroError):
+            k.render_macro(CFG,"_RESUME_VERIFIED",self.state(expected=0,active=4))
+
+    def test_unpaused_or_unrecorded_resume_is_refused(self):
+        for pr in [self.state(paused=False),self.state(expected=-1)]:
+            with self.assertRaises(MacroError): k.render_macro(CFG,"RESUME",pr,rawparams="")
+
+    def test_duplicate_pause_does_not_overwrite_record(self):
+        out=C(k.render_macro(CFG,"PAUSE",self.state(paused=True),rawparams=""))
+        self.assertEqual(out,[])
+
+    def test_pause_captures_tool_before_pausing(self):
+        out=C(k.render_macro(CFG,"PAUSE",self.state(paused=False,active=4),rawparams=""))
+        self.assertIn("VARIABLE=expected_tool VALUE=4",out[0])
 
     def test_resume_preserves_mainsail_client_hooks(self):
-        # unretract + velocity handling must still be present in the body source.
-        body = CFG["gcode_macro RESUME"]["gcode"]
-        self.assertIn("_CLIENT_EXTRUDE", body)
-        self.assertIn("recover_velocity", body)
-        self.assertIn("runout_sensor", body)
-        self.assertIn("restore_idle_timeout", body)
+        body=CFG["gcode_macro _RESUME_VERIFIED"]["gcode"]
+        for key in ["_CLIENT_EXTRUDE","recover_velocity","runout_sensor","restore_idle_timeout"]:
+            self.assertIn(key,body)
 
 
 # --------------------------------------------------------------------------- #
@@ -270,17 +274,16 @@ class Calibration(unittest.TestCase):
         with self.assertRaises(MacroError):
             k.render_macro(CFG, "CALIBRATE_ALL_OFFSETS", base_printer(homed=""))
 
-    def test_stage_binds_result_to_active_tool_not_last(self):
-        # Active tool T4 -> staged to 'tool T4' section (not T0).
-        pr = S(toolchanger=S(tool="tool T4"),
-               tools_calibrate=S(last_result=Coord([1.0, 2.0, 3.0])))
-        out = C(k.render_macro(CFG, "_STAGE_ACTIVE_TOOL_OFFSET", pr))
-        saves = [l for l in out if l.startswith("TOOL_CALIBRATE_SAVE_TOOL_OFFSET")]
-        self.assertEqual(len(saves), 3)
-        for l in saves:
-            self.assertIn('SECTION="tool T4"', l)
-        self.assertTrue(any("gcode_x_offset" in l for l in saves))
-        self.assertTrue(any("gcode_z_offset" in l for l in saves))
+    def test_stage_delegates_to_provenance_guard(self):
+        out = C(k.render_macro(CFG, "_STAGE_ACTIVE_TOOL_OFFSET", S()))
+        self.assertEqual(out, ["APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS"])
+
+    def test_measurement_invalidates_previous_result_before_native_call(self):
+        for macro, native in [("TOOL_LOCATE_SENSOR", "_BASE_TOOL_LOCATE_SENSOR"),
+                              ("TOOL_CALIBRATE_TOOL_OFFSET", "_BASE_TOOL_CALIBRATE_TOOL_OFFSET")]:
+            out = C(k.render_macro(CFG, macro, S(), rawparams=""))
+            self.assertIn("VARIABLE=valid VALUE=False", out[0])
+            self.assertTrue(out[1].startswith(native))
 
 
 class ApplyAndSave(unittest.TestCase):
@@ -295,7 +298,8 @@ class ApplyAndSave(unittest.TestCase):
 
     def test_valid_offset_applies_and_stages(self):
         out = C(k.render_macro(CFG, "APPLY_AND_SAVE_NEW_CALIBRATION_OFFSETS", self._pr()))
-        self.assertTrue(any(l.startswith("SET_GCODE_OFFSET") for l in out))
+        self.assertFalse(any(l.startswith("SET_GCODE_OFFSET") for l in out))
+        self.assertTrue(any("VARIABLE=valid VALUE=False" in l for l in out))
         saves = [l for l in out if l.startswith("TOOL_CALIBRATE_SAVE_TOOL_OFFSET")]
         self.assertEqual(len(saves), 3)
         for l in saves:
@@ -350,6 +354,7 @@ class AlignAndSpeed(unittest.TestCase):
     def _align_pr(self, pos):
         pr = base_printer()
         pr["gcode_move"] = S(gcode_position=Coord(list(pos) + [0]))
+        pr["toolhead"]["position"] = Coord(list(pos) + [0])
         return pr
 
     def test_positive_dock_y_is_accepted(self):
