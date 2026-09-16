@@ -1,8 +1,8 @@
-[update_manager klipper-toolchanger]
+[update_manager klipper-toolchanger-easy]
 type = git_repo
 channel = dev
-path = ~/klipper-toolchanger
-origin = https://github.com/viesturz/klipper-toolchanger.git
+path = ~/klipper-toolchanger-easy
+origin = https://github.com/jwellman80/klipper-toolchanger-easy.git
 managed_services = klipper
 primary_branch = main
 
@@ -22,6 +22,19 @@ virtualenv = ~/.KlipperScreen-env
 requirements = scripts/KlipperScreen-requirements.txt
 system_dependencies = scripts/system-dependencies.json
 managed_services = KlipperScreen
+
+[update_manager beacon]
+type = git_repo
+channel = dev
+path = ~/beacon_klipper
+origin = https://github.com/beacon3d/beacon_klipper.git
+env = ~/klippy-env/bin/python
+requirements = requirements.txt
+install_script = install.sh
+is_system_service = False
+managed_services = klipper
+info_tags = 
+	desc=Beacon Surface Scanner
 
 [server]
 host = 0.0.0.0
@@ -93,4 +106,14 @@ type = git_repo
 path = ~/klipper-led_effect
 origin = https://github.com/julianschill/klipper-led_effect.git
 is_system_service = False
+
+[update_manager motors-sync]
+type = git_repo
+path = /home/pi/motors-sync
+origin = https://github.com/MRX8024/motors-sync.git
+primary_branch = main
+managed_services = klipper
+virtualenv = /home/pi/klippy-env/
+requirements = wiki/requirements.txt
+system_dependencies = wiki/packages.json
 
