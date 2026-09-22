@@ -2,6 +2,8 @@
 
 Offline tests are not hardware certification. Follow this order with a clear bed, properly secured mounted tool, clear docks, and emergency stop within reach. Do not deliberately detach a tool during a print to test detection. Stop on unexpected travel, temperature, collision, or shutdown.
 
+Current pickup status: **USER-VERIFIED**; see [restoration evidence and limits](docs/PICKUP-RESTORATION.md). The following is a future operator checklist, not a request to repeat activation.
+
 ## 1. Configuration load (operator performs before handoff)
 
 Deploy only after checking standby and all heater targets zero. Run RESTART, not homing or printing. Require Klipper ready, warnings empty, input_shaper loaded, and calibration offsets unchanged. Read back effective macros. If configuration loading fails, restore the previous files and RESTART; do not proceed.
@@ -23,7 +25,7 @@ These errors are intentional. Do not use the retired UNSAFE_LOWER_BED/UNSAFE_RAI
 
 1. Confirm the normal mounted-tool/bed/dock prerequisites for this printer, then `G28`. Homing geometry was not changed.
 2. `INCREASE_Z_CLEARANCE MM=5`: expect clearance to increase by about 5 mm, limited near the ceiling.
-3. `PRINT_END`: expect heater targets zero, a Z-only upward lift of at most 10 mm, NO XY parking, NO descent, and motors remaining enabled until the existing idle timeout. The removal of lateral parking is intentional: no unverified clear corridor is assumed.
+3. `PRINT_END`: expect heater targets zero, a Z-only upward lift of at most 10 mm, NO XY parking, NO descent, then M400 followed by M84 to release motors; inspect gantry drift under attended conditions. The removal of lateral parking is intentional: no unverified clear corridor is assumed.
 4. Do not test at maximum travel or use fabricated coordinates. Near-ceiling cases were checked offline; physical boundary verification belongs in a separate controlled session.
 5. After these pass, perform familiar attended tool changes individually (T0 then each needed tool). Watch pickup/detection and check console for errors. New shaping uses existing configured parameters, not newly measured values.
 
@@ -31,7 +33,7 @@ These errors are intentional. Do not use the retired UNSAFE_LOWER_BED/UNSAFE_RAI
 
 Use a small, familiar single-tool sliced file, not a large multi-tool job. Keep the first run attended.
 
-- Startup: bed/nozzle preparation, the existing five-minute soak for bed <=90 C or chamber-target wait above90 C, THEN final QGL, Z reference/Beacon calibration and adaptive mesh.
+- Startup: bed/nozzle preparation, material-aware chamber soak (ABS/ASA by default; PLA/TPU/TPE/PETG skip; unknown materials use bed >90 C; HEATSOAK=0/1 overrides), THEN final QGL, Z reference/Beacon calibration and adaptive mesh.
 - Confirm object definitions exist before meshing if adaptive bounds are expected.
 - Confirm normal purge; max_extrude_cross_section remains5 for VORON_PURGE.
 - Pause through Mainsail. Resume while hot: tool verification precedes unretract and return to print. Do not attempt a cold resume without following the displayed reheating instructions.
@@ -61,10 +63,10 @@ Fan voltage/startup/cooling, Nitehawk resistor identity, motor interpolation pol
 
 ## Offline tests
 
-From repository root: create a local venv with Jinja2 if absent, then `cd tests && ../.venv/bin/python -m unittest test_safety_fixes -v`. Harness uses the operator's dereferenced review evidence, not a standalone firmware simulator; see tests/klipper_render.py. No rendered G-code is sent to hardware.
+From repository root: create a local venv with Jinja2 if absent, then `cd tests && ../.venv/bin/python -m unittest discover -v`. Harness uses the operator's dereferenced review evidence, not a standalone firmware simulator; see tests/klipper_render.py. No rendered G-code is sent to hardware.
 
 ## Rollback
 
 Pre-change commit: `152d3217b502ee6e02fa679775a5d6ad18507e5d`.
-Dereferenced backup on Pi: `/home/hermes/printer-backups/before-safety-fixes-20260915-212447.tar.gz`.
+Dereferenced backup on Pi: `${BACKUP_DIRECTORY}/before-safety-fixes-20260915-212447.tar.gz`.
 Do not extract the entire dereferenced archive over managed symlinks. Restore only changed user files from the Git baseline, then RESTART. See RECOVERY.md. If you encounter a problem, stop and ask the operator to perform rollback rather than forcing unhomed movement.

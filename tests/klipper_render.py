@@ -143,6 +143,7 @@ EFFECTIVE_INCLUDES = [
     os.path.join(FIX, "homing.cfg"),                                       # our homing edits
     os.path.join(REVIEW, "toolchanger/readonly-configs/toolchanger.cfg"),  # RESUME/after_change/TOOL_ALIGN base
     os.path.join(REVIEW, "toolchanger/readonly-configs/calibrate-offsets.cfg"),  # calibrate base
+    os.path.join(FIX, "front-brush.cfg"),                                  # manual brush; auto helper has no pickup caller
     os.path.join(FIX, "user-overrides.cfg"),                               # our late overrides (LAST)
 ]
 

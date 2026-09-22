@@ -12,22 +12,24 @@ dependencies listed below and re-applying any local patches.
 > exact dereferenced content and local patches; this repo does **not** yet claim to
 > contain them.
 
+Current pickup restoration is **USER-VERIFIED**. See [current behavior and evidence boundaries](docs/PICKUP-RESTORATION.md); older safety-fix rollback instructions below are historical and must not be used as a whole-tree rollback of later changes.
+
 ## Host / core software (from review evidence `info.json`)
 
 | Item | Value |
 |------|-------|
 | Host | SexPistols |
 | Klipper | `v0.13.0-629-g6349d4fb0-dirty` (note the `-dirty` suffix: do not assume pristine upstream) |
-| Config path | `/home/pi/printer_data/config/printer.cfg` |
-| Klippy env | `/home/pi/klippy-env` |
+| Config path | `${PRINTER_HOME}/printer_data/config/printer.cfg` |
+| Klippy env | `${PRINTER_HOME}/klippy-env` |
 
 ## Symlinked dependencies (do NOT follow these links for writing)
 
 | Repo path (symlink) | Target | Upstream project | Known revision |
 |---------------------|--------|------------------|----------------|
-| `KAMP` | `/home/pi/Klipper-Adaptive-Meshing-Purging/Configuration` | Klipper-Adaptive-Meshing-Purging | `b0dad8e` (local KAMP_Settings content changes) |
-| `mainsail.cfg` | `/home/pi/mainsail-config/client.cfg` | mainsail-config | tracked at **ff3869a** (source of the RESUME/PAUSE body reproduced in `user-overrides.cfg`) |
-| `toolchanger/readonly-configs/toolchanger.cfg` | `/home/pi/klipper-toolchanger-easy/examples/easy-additions/toolchanger.cfg` | klipper-toolchanger-easy | `08dc049` |
+| `KAMP` | `${PRINTER_HOME}/Klipper-Adaptive-Meshing-Purging/Configuration` | Klipper-Adaptive-Meshing-Purging | `b0dad8e` (local KAMP_Settings content changes) |
+| `mainsail.cfg` | `${PRINTER_HOME}/mainsail-config/client.cfg` | mainsail-config | tracked at **ff3869a** (source of the RESUME/PAUSE body reproduced in `user-overrides.cfg`) |
+| `toolchanger/readonly-configs/toolchanger.cfg` | `${PRINTER_HOME}/klipper-toolchanger-easy/examples/easy-additions/toolchanger.cfg` | klipper-toolchanger-easy | `08dc049` |
 | `toolchanger/readonly-configs/toolchanger-macros.cfg` | `.../easy-additions/toolchanger-macros.cfg` | klipper-toolchanger-easy | `08dc049` |
 | `toolchanger/readonly-configs/toolchanger-include.cfg` | `.../easy-additions/user-configs/toolchanger-include.cfg` | klipper-toolchanger-easy | `08dc049` |
 | `toolchanger/readonly-configs/calibrate-offsets.cfg` | `.../easy-additions/calibrate-offsets.cfg` | klipper-toolchanger-easy | `08dc049` |
@@ -74,10 +76,10 @@ win. Duplicate `[gcode_macro NAME]` sections do **not** stack wrappers — they 
 
 Baseline commit: `152d3217b502ee6e02fa679775a5d6ad18507e5d`.
 Verified dereferenced backup on Pi:
-`/home/hermes/printer-backups/before-safety-fixes-20260915-212447.tar.gz`.
+`${BACKUP_DIRECTORY}/before-safety-fixes-20260915-212447.tar.gz`.
 Do not blindly extract over live symlinks; this archive contains their contents.
 
-Stop printing and ensure heaters are off. From `/home/pi/printer_data/config`:
+Stop printing and ensure heaters are off. From `${PRINTER_HOME}/printer_data/config`:
 
 ```bash
 git --git-dir=.git --work-tree=. restore --source=152d321 --worktree -- printer.cfg macros.cfg homing.cfg toolchanger/tools/T0.cfg toolchanger/tools/T1.cfg toolchanger/tools/T2.cfg toolchanger/tools/T3.cfg toolchanger/tools/T4.cfg
@@ -99,7 +101,7 @@ PAUSE freezes tool identity; RESUME verifies it before a separate render handles
 that verified tool's temperature and Mainsail recovery. Calibration changes are
 stage-only until explicit SAVE_CONFIG/restart; the live transform is not partially
 updated. PRINT_END shuts heat off first, then at most10mm Z-only lift with headroom,
-without lateral parking or immediate gantry motor disable. Existing idle timeout remains.
+without lateral parking, then M400 before M84 releases the motors. This is the later operator-requested behavior, not the original keep-enabled policy.
 
 Offline tests are not hardware certification. Follow TESTING.md. Crash detector,
 electrical settings, dock coordinates, PID, pressure advance, and motion limits

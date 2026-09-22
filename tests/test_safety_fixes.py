@@ -92,10 +92,13 @@ class PrintEndShutdown(unittest.TestCase):
         self.assertFalse(any(l.startswith("G1 E-") for l in out))
         self.assertTrue(any("TURN_OFF_HEATERS" in l for l in out))
 
-    def test_shutdown_is_first_and_cannot_retract_or_drop_gantry(self):
+    def test_shutdown_is_first_and_motor_release_follows_completed_park(self):
         out = C(k.render_macro(CFG, "PRINT_END", base_printer()))
         self.assertEqual(out[0], "TURN_OFF_HEATERS")
-        self.assertFalse(any(l.startswith(("G1 E", "M18", "M84")) for l in out))
+        self.assertFalse(any(l.startswith(("G1 E", "M18")) for l in out))
+        park = out.index("_PRINT_END_PARK")
+        self.assertEqual(out[park + 1:park + 3], ["M400", "M84"])
+        self.assertEqual(out.count("M84"), 1)
 
 
 # --------------------------------------------------------------------------- #

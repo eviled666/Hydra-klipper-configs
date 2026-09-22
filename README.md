@@ -1,6 +1,10 @@
 # Hydra-klipper-configs
 
-## Verified safety fixes (branch `fix/verified-printer-safety`)
+## Current pickup status — USER-VERIFIED
+
+The owner confirmed the restored rounded pickup is fixed. Automatic pickup brushing is off; manual brush remains. See [pickup restoration and verification](docs/PICKUP-RESTORATION.md).
+
+## Previously verified safety fixes
 
 Confirmed Klipper software fixes from the completed reviews are layered as
 **user-owned overrides** on top of the read-only symlinked dependencies:
@@ -23,5 +27,5 @@ rendered G-code is never executed):
 
 ```
 uv venv .venv && uv pip install --python .venv/bin/python jinja2   # first time only
-cd tests && ../.venv/bin/python -m unittest test_safety_fixes -v
+cd tests && ../.venv/bin/python -m unittest discover -v
 ```
